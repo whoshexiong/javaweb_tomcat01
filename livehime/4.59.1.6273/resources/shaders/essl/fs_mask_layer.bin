@@ -1,0 +1,92 @@
+ out vec4 FragColor;
+
+in highp vec2 v_texcoord0;
+uniform sampler2D s_texColor;
+uniform sampler2D s_texColor1;
+
+uniform highp mat4 modelMatrix;
+uniform highp vec4 effectParams;
+uniform highp vec4 circleParams;
+uniform highp vec4 inputSize;
+uniform highp vec4 rectangleParams;
+uniform highp vec4 mirrorParams;
+uniform highp vec4 foreground_needMirrorSegment;
+#define feather effectParams.y
+
+float sdBox(in vec2 p, in vec2 b )
+{
+    highp vec2 d = abs(p)-b;
+    return length(max(d,0.0)) + min(max(d.x,d.y),0.0);
+}
+
+float sdEllipse(in vec2 p, in vec2 r)
+{
+  vec2 a = p / r;
+  return (length(a) - 1.0) * min(r.x, r.y);
+}
+
+void main(){
+  if(effectParams.x == 0.0) {    //HumanActionTexture
+    vec2 tem_texCoord = v_texcoord0;
+    if(foreground_needMirrorSegment.y == 1.0) {
+       tem_texCoord = vec2(1.0 - v_texcoord0.x, v_texcoord0.y);
+    }
+    vec4 outTexture = texture(s_texColor1, tem_texCoord);
+    if(foreground_needMirrorSegment.x == 0.0) { //后景
+       outTexture.r = 1.0 - outTexture.r;
+    }
+    FragColor = vec4(outTexture.r, outTexture.r, outTexture.r, 1.0);
+    return;
+  }
+
+  vec2 st = (modelMatrix * vec4(gl_FragCoord.xy, 0.0, 1.0)).xy / inputSize.xy;
+  float pct = 0.0;
+
+  if(effectParams.x == 1.0) // line半屏矩形
+  {
+    pct = sdBox(st, vec2(2.0,2.0))/1.8;
+  }
+  else if(effectParams.x == 2.0) // 镜像矩形
+  {
+    pct = sdBox(st, mirrorParams.xy);
+  }
+  else if(effectParams.x == 3.0)   // 圆角矩形
+  {
+    if(rectangleParams.z < 0.01){
+      pct = sdBox(st, rectangleParams.xy) / (rectangleParams.x + rectangleParams.y) / 2.3;
+    } else {
+      float rectangleSDF = sdBox(st, rectangleParams.xy);
+      float arcSDF = 0.0;
+      float ellipseX = rectangleParams.x * rectangleParams.z;
+      float ellipseY = rectangleParams.y * rectangleParams.z;
+      float posEllipseX = rectangleParams.x - ellipseX;
+      float posEllipseY = rectangleParams.y - ellipseY;
+      if(st.x >= posEllipseX && st.y >= posEllipseY) arcSDF = sdEllipse(st + vec2(-1.0 * posEllipseX, -1.0 * posEllipseY), vec2(ellipseX, ellipseY)); //负值表示物体内部，使用正值表示物体外部
+      else if(st.x <= -1.0 * posEllipseX && st.y >= posEllipseY) arcSDF = sdEllipse(st + vec2(posEllipseX, -1.0 * posEllipseY), vec2(ellipseX, ellipseY));
+      else if(st.x <= -1.0 * posEllipseX && st.y <= -1.0 * posEllipseY) arcSDF = sdEllipse(st + vec2(posEllipseX, posEllipseY), vec2(ellipseX, ellipseY));
+      else if(st.x >= posEllipseX && st.y <= -1.0 * posEllipseY) arcSDF =sdEllipse(st + vec2(-1.0 * posEllipseX, posEllipseY), vec2(ellipseX, ellipseY));
+      if(rectangleSDF == 0.0) pct = arcSDF;
+      else pct = max(rectangleSDF, arcSDF);
+    }
+  }
+  else if(effectParams.x == 4.0)   //(椭)圆
+  {
+    pct = sdEllipse(st, vec2(circleParams.x, circleParams.y)) / 0.80;
+  }
+
+  vec4 color = vec4(0.0);
+  vec4 line_color = vec4(1.0);
+  if(foreground_needMirrorSegment.x == 0.0)    //翻转
+  {
+    line_color = vec4(0.0);
+    color = vec4(1.0);
+  }
+  if (feather < 0.001) {
+    color = mix(color, line_color, 1.0 - step(0.0, pct));
+  } else if (feather < 0.03){
+    color = mix(color, line_color, 1.0 - clamp((pct + feather) / (2.0f * feather), 0.0f, 1.0f));
+  } else {
+    color = mix(color, line_color, 1.0 - smoothstep(-feather, feather, pct));  //羽化半径为像素值
+  }
+  FragColor = color;
+}
